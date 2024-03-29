@@ -1,4 +1,4 @@
-import BadRequest from "exceptions/BadRequest";
+import BadRequestException from "exceptions/BadRequest";
 import type { Request, Response, NextFunction } from "express";
 import { AnyZodObject, ZodError } from "zod";
 
@@ -14,9 +14,9 @@ const validationMiddleware =
       return next();
     } catch (error) {
       if (error instanceof ZodError) {
-        return next(new BadRequest(error.issues[0].message));
+        return next(new BadRequestException(error.issues[0].message));
       }
-      return next(new BadRequest("Error in validation process."));
+      return next(new BadRequestException("Error in validation process."));
     }
   };
 

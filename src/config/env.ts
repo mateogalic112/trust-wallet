@@ -13,4 +13,7 @@ export const env = cleanEnv(process.env, {
   DATABASE_URL: str(),
 
   PORT: port({ default: 5000 }),
+
+  SEPOLIA_API_KEY: str(),
+  SEPOLIA_API_URL: str(),
 });

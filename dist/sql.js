@@ -46,7 +46,9 @@ var env = (0, import_envalid.cleanEnv)(process.env, {
   POSTGRES_PORT: (0, import_envalid.port)({ default: 5432 }),
   POSTGRES_DB: (0, import_envalid.str)(),
   DATABASE_URL: (0, import_envalid.str)(),
-  PORT: (0, import_envalid.port)({ default: 5e3 })
+  PORT: (0, import_envalid.port)({ default: 5e3 }),
+  SEPOLIA_API_KEY: (0, import_envalid.str)(),
+  SEPOLIA_API_URL: (0, import_envalid.str)()
 });
 
 // src/config/sql.ts
@@ -62,5 +64,4 @@ var sql = (0, import_postgres.default)(env.DATABASE_URL, {
   password: env.POSTGRES_PASSWORD
   // Password of database user
 });
-console.log({ sql });
 var sql_default = sql;

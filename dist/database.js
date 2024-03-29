@@ -56,7 +56,9 @@ var env = (0, import_envalid.cleanEnv)(process.env, {
   POSTGRES_PORT: (0, import_envalid.port)({ default: 5432 }),
   POSTGRES_DB: (0, import_envalid.str)(),
   DATABASE_URL: (0, import_envalid.str)(),
-  PORT: (0, import_envalid.port)({ default: 5e3 })
+  PORT: (0, import_envalid.port)({ default: 5e3 }),
+  SEPOLIA_API_KEY: (0, import_envalid.str)(),
+  SEPOLIA_API_URL: (0, import_envalid.str)()
 });
 
 // src/config/sql.ts
@@ -72,18 +74,29 @@ var sql = (0, import_postgres.default)(env.DATABASE_URL, {
   password: env.POSTGRES_PASSWORD
   // Password of database user
 });
-console.log({ sql });
 var sql_default = sql;
 
 // src/config/database.ts
 var databaseInit = () => __async(exports, null, function* () {
+  yield sql_default`DROP TABLE IF EXISTS transactions`;
   yield sql_default`
     CREATE TABLE IF NOT EXISTS users (
         user_id SERIAL PRIMARY KEY, 
-        balance INTEGER, 
-        email VARCHAR(255), 
-        deposit_address VARCHAR(255), 
-        private_key TEXT, 
+        balance INTEGER DEFAULT 0, 
+        email VARCHAR(255) UNIQUE NOT NULL, 
+        deposit_address VARCHAR(255) NOT NULL, 
+        private_key TEXT NOT NULL, 
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    )`;
+  yield sql_default`
+    CREATE TABLE IF NOT EXISTS transactions (
+        transaction_id SERIAL PRIMARY KEY, 
+        amount INTEGER NOT NULL, 
+        wallet VARCHAR(255) NOT NULL,
+        type VARCHAR(255) NOT NULL,
+        transaction_hash VARCHAR(255),
+        transaction_index INTEGER,
+        deposited BOOLEAN DEFAULT FALSE,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
     )`;
 });

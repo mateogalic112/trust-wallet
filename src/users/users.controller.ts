@@ -10,9 +10,7 @@ class UserController {
   public path = "/users";
   public router = Router();
 
-  public userService = new UserService();
-
-  constructor() {
+  constructor(private readonly userService: UserService) {
     this.initializeRoutes();
   }
 

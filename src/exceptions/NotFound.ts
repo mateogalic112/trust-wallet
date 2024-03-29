@@ -1,11 +1,11 @@
 import HttpException from "./HttpException";
 
-class BadRequestException extends HttpException {
+class NotFoundException extends HttpException {
   message: string;
   constructor(message: string) {
-    super(400, message);
+    super(404, message);
     this.message = message;
   }
 }
 
-export default BadRequestException;
+export default NotFoundException;
