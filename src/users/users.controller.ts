@@ -1,6 +1,9 @@
 import { NextFunction, Router, Request, Response } from "express";
 import validationMiddleware from "middleware/validation.middleware";
-import { CreateUserDto, createUserSchema } from "./users.validation";
+import {
+  CreateUserRequestDto,
+  createUserRequestSchema,
+} from "./users.validation";
 import UserService from "./users.service";
 
 class UserController {
@@ -18,7 +21,7 @@ class UserController {
 
     this.router.post(
       this.path,
-      validationMiddleware(createUserSchema),
+      validationMiddleware(createUserRequestSchema),
       this.createUser
     );
   }
@@ -42,8 +45,8 @@ class UserController {
     next: NextFunction
   ) => {
     try {
-      const userData: CreateUserDto = request.body;
-      const createdUser = await this.userService.createUser(userData);
+      const requestData: CreateUserRequestDto = request.body;
+      const createdUser = await this.userService.createUser(requestData);
       return response.json(createdUser);
     } catch (err) {
       next(err);

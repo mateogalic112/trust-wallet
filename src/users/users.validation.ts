@@ -1,15 +1,22 @@
 import { z } from "zod";
 
-export const createUserSchema = z.object({
+export const createUserRequestSchema = z.object({
   body: z.object({
-    balance: z.number(),
     email: z.string().email(),
-    depositAddress: z.string(),
-    privateKey: z.string(),
   }),
 });
 
-export type CreateUserDto = z.infer<typeof createUserSchema>["body"];
+export type CreateUserRequestDto = z.infer<
+  typeof createUserRequestSchema
+>["body"];
+
+export const createUserSchema = z.object({
+  balance: z.number(),
+  email: z.string().email(),
+  depositAddress: z.string(),
+  privateKey: z.string(),
+});
+export type CreateUserDto = z.infer<typeof createUserSchema>;
 
 export const userSchema = z.object({
   user_id: z.number(),

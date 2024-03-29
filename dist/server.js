@@ -140,13 +140,16 @@ var validation_middleware_default = validationMiddleware;
 
 // src/users/users.validation.ts
 var import_zod2 = require("zod");
-var createUserSchema = import_zod2.z.object({
+var createUserRequestSchema = import_zod2.z.object({
   body: import_zod2.z.object({
-    balance: import_zod2.z.number(),
-    email: import_zod2.z.string().email(),
-    depositAddress: import_zod2.z.string(),
-    privateKey: import_zod2.z.string()
+    email: import_zod2.z.string().email()
   })
+});
+var createUserSchema = import_zod2.z.object({
+  balance: import_zod2.z.number(),
+  email: import_zod2.z.string().email(),
+  depositAddress: import_zod2.z.string(),
+  privateKey: import_zod2.z.string()
 });
 var userSchema = import_zod2.z.object({
   user_id: import_zod2.z.number(),
@@ -194,18 +197,25 @@ var getUsersQuery = () => __async(void 0, null, function* () {
 });
 
 // src/users/users.service.ts
+var import_ethers = require("ethers");
 var UserService = class {
   constructor() {
     this.getUsers = () => __async(this, null, function* () {
       const rawUsers = yield getUsersQuery();
-      const users = Promise.all(
+      const users = yield Promise.all(
         rawUsers.map((rawUser) => userSchema.parseAsync(rawUser))
       );
       return users;
     });
-    this.createUser = (userData) => __async(this, null, function* () {
-      const createdUser = yield createUserQuery(userData);
-      return createdUser;
+    this.createUser = (requestData) => __async(this, null, function* () {
+      const wallet = import_ethers.ethers.Wallet.createRandom();
+      const userData = {
+        balance: 0,
+        depositAddress: wallet.address,
+        privateKey: wallet.privateKey,
+        email: requestData.email
+      };
+      return yield createUserQuery(userData);
     });
   }
 };
@@ -227,8 +237,8 @@ var UserController = class {
     });
     this.createUser = (request, response, next) => __async(this, null, function* () {
       try {
-        const userData = request.body;
-        const createdUser = yield this.userService.createUser(userData);
+        const requestData = request.body;
+        const createdUser = yield this.userService.createUser(requestData);
         return response.json(createdUser);
       } catch (err) {
         next(err);
@@ -240,7 +250,7 @@ var UserController = class {
     this.router.get(this.path, this.getUsers);
     this.router.post(
       this.path,
-      validation_middleware_default(createUserSchema),
+      validation_middleware_default(createUserRequestSchema),
       this.createUser
     );
   }
