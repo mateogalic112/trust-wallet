@@ -8,7 +8,12 @@ class App {
   constructor(controllers: Controller[]) {
     this.app = express();
 
+    this.initializeMiddlewares();
     this.initializeControllers(controllers);
+  }
+
+  private initializeMiddlewares() {
+    this.app.use(express.json());
   }
 
   private initializeControllers(controllers: Controller[]) {
