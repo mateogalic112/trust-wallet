@@ -7,6 +7,7 @@ import {
 import {
   CreateUserDto,
   CreateUserRequestDto,
+  WithdrawRequest,
   userSchema,
 } from "./users.validation";
 import { ethers } from "ethers";
@@ -16,6 +17,7 @@ import {
 } from "blockchain/blockchain.validation";
 import sql from "config/sql";
 import { TransactionType } from "blockchain/blockchain.service";
+import BadRequestException from "exceptions/BadRequest";
 
 class UserService {
   public getUsers = async () => {
@@ -24,6 +26,30 @@ class UserService {
       rawUsers.map((rawUser) => userSchema.parseAsync(rawUser))
     );
     return users;
+  };
+
+  public withdraw = async (requestData: WithdrawRequest) => {
+    const { withdraw_amount, user_email } = requestData;
+
+    return sql.begin(async (sql) => {
+      const userRows =
+        await sql`SELECT user_id, balance, deposit_address FROM users WHERE email = ${user_email} FOR UPDATE`;
+
+      if (userRows.length === 0) {
+        throw new NotFoundException("User not found");
+      }
+
+      const userRow = userRows[0];
+
+      if (userRow.balance < withdraw_amount) {
+        throw new BadRequestException("Insufficient balance");
+      }
+
+      await sql`UPDATE users SET balance = balance - ${withdraw_amount} WHERE user_id = ${userRow.user_id}`;
+      await sql`INSERT INTO transactions (wallet, amount, type) VALUES (${userRow.deposit_address}, ${withdraw_amount}, ${TransactionType.WITHDRAW})`;
+
+      return { userBalance: userRow.balance - withdraw_amount };
+    });
   };
 
   public findUserByEmail = async (email: string) => {

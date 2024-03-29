@@ -28,3 +28,13 @@ export const userSchema = z.object({
 });
 
 export type User = z.infer<typeof userSchema>;
+
+export const withdrawRequestSchema = z.object({
+  body: z.object({
+    withdraw_address: z.string(),
+    withdraw_amount: z.number(),
+    user_email: z.string().email(),
+  }),
+});
+
+export type WithdrawRequest = z.infer<typeof withdrawRequestSchema>["body"];

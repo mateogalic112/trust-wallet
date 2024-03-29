@@ -2,7 +2,9 @@ import { NextFunction, Router, Request, Response } from "express";
 import validationMiddleware from "middleware/validation.middleware";
 import {
   CreateUserRequestDto,
+  WithdrawRequest,
   createUserRequestSchema,
+  withdrawRequestSchema,
 } from "./users.validation";
 import UserService from "./users.service";
 
@@ -18,11 +20,31 @@ class UserController {
     this.router.get(this.path, this.getUsers);
 
     this.router.post(
+      `${this.path}/withdraw`,
+      validationMiddleware(withdrawRequestSchema),
+      this.withdraw
+    );
+
+    this.router.post(
       this.path,
       validationMiddleware(createUserRequestSchema),
       this.createUser
     );
   }
+
+  private withdraw = async (
+    request: Request,
+    response: Response,
+    next: NextFunction
+  ) => {
+    const requestData: WithdrawRequest = request.body;
+    try {
+      const successfulWithdrawal = await this.userService.withdraw(requestData);
+      return response.json({ successfulWithdrawal });
+    } catch (err) {
+      next(err);
+    }
+  };
 
   private getUsers = async (
     _: Request,

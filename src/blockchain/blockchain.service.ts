@@ -47,9 +47,8 @@ class BlockchainService {
   ) => {
     if (transaction.from !== userWalletAddress) return false;
 
-    const logs = transaction.logs;
-
-    const isUSDCTransfer = logs[0].address === this.USDC_CONTRACT_ADDRESS;
+    const isUSDCTransfer =
+      transaction.logs[0].address === this.USDC_CONTRACT_ADDRESS;
     if (!isUSDCTransfer) return false;
 
     if (transaction.status !== this.TRANSACTION_SUCCESS_STATUS) return false;

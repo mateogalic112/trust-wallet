@@ -149,8 +149,7 @@ var BlockchainService = class {
     this.checkValidTransaction = (userWalletAddress, transaction) => {
       if (transaction.from !== userWalletAddress)
         return false;
-      const logs = transaction.logs;
-      const isUSDCTransfer = logs[0].address === this.USDC_CONTRACT_ADDRESS;
+      const isUSDCTransfer = transaction.logs[0].address === this.USDC_CONTRACT_ADDRESS;
       if (!isUSDCTransfer)
         return false;
       if (transaction.status !== this.TRANSACTION_SUCCESS_STATUS)
@@ -331,6 +330,13 @@ var userSchema = import_zod3.z.object({
   private_key: import_zod3.z.string(),
   created_at: import_zod3.z.date()
 });
+var withdrawRequestSchema = import_zod3.z.object({
+  body: import_zod3.z.object({
+    withdraw_address: import_zod3.z.string(),
+    withdraw_amount: import_zod3.z.number(),
+    user_email: import_zod3.z.string().email()
+  })
+});
 
 // src/users/users.controller.ts
 var UserController = class {
@@ -338,6 +344,15 @@ var UserController = class {
     this.userService = userService;
     this.path = "/users";
     this.router = (0, import_express4.Router)();
+    this.withdraw = (request, response, next) => __async(this, null, function* () {
+      const requestData = request.body;
+      try {
+        const successfulWithdrawal = yield this.userService.withdraw(requestData);
+        return response.json({ successfulWithdrawal });
+      } catch (err) {
+        next(err);
+      }
+    });
     this.getUsers = (_, response, next) => __async(this, null, function* () {
       try {
         const users = yield this.userService.getUsers();
@@ -359,6 +374,11 @@ var UserController = class {
   }
   initializeRoutes() {
     this.router.get(this.path, this.getUsers);
+    this.router.post(
+      `${this.path}/withdraw`,
+      validation_middleware_default(withdrawRequestSchema),
+      this.withdraw
+    );
     this.router.post(
       this.path,
       validation_middleware_default(createUserRequestSchema),
@@ -418,6 +438,22 @@ var UserService = class {
         rawUsers.map((rawUser) => userSchema.parseAsync(rawUser))
       );
       return users;
+    });
+    this.withdraw = (requestData) => __async(this, null, function* () {
+      const { withdraw_amount, user_email } = requestData;
+      return sql_default.begin((sql2) => __async(this, null, function* () {
+        const userRows = yield sql2`SELECT user_id, balance, deposit_address FROM users WHERE email = ${user_email} FOR UPDATE`;
+        if (userRows.length === 0) {
+          throw new NotFound_default("User not found");
+        }
+        const userRow = userRows[0];
+        if (userRow.balance < withdraw_amount) {
+          throw new BadRequest_default("Insufficient balance");
+        }
+        yield sql2`UPDATE users SET balance = balance - ${withdraw_amount} WHERE user_id = ${userRow.user_id}`;
+        yield sql2`INSERT INTO transactions (wallet, amount, type) VALUES (${userRow.deposit_address}, ${withdraw_amount}, ${"WITHDRAW" /* WITHDRAW */})`;
+        return { userBalance: userRow.balance - withdraw_amount };
+      }));
     });
     this.findUserByEmail = (email) => __async(this, null, function* () {
       const rawUser = yield findUserByEmailQuery(email);
