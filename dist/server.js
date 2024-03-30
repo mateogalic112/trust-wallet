@@ -54,8 +54,7 @@ var env = (0, import_envalid.cleanEnv)(process.env, {
   POSTGRES_DB: (0, import_envalid.str)(),
   DATABASE_URL: (0, import_envalid.str)(),
   PORT: (0, import_envalid.port)({ default: 5e3 }),
-  SEPOLIA_API_KEY: (0, import_envalid.str)(),
-  SEPOLIA_API_URL: (0, import_envalid.str)()
+  SEPOLIA_API_KEY: (0, import_envalid.str)()
 });
 
 // src/app.ts
@@ -102,8 +101,14 @@ var app_default = App;
 // src/blockchain/blockchain.controller.ts
 var import_express2 = require("express");
 
-// src/blockchain/blockchain.service.ts
-var import_ethers = require("ethers");
+// src/blockchain/blockchain.validation.ts
+var import_zod = require("zod");
+var scanBlockRequestSchema = import_zod.z.object({
+  body: import_zod.z.object({
+    blockNumber: import_zod.z.number(),
+    email: import_zod.z.string()
+  })
+});
 
 // src/exceptions/HttpException.ts
 var HttpException = class extends Error {
@@ -115,6 +120,98 @@ var HttpException = class extends Error {
 };
 var HttpException_default = HttpException;
 
+// src/exceptions/BadRequest.ts
+var BadRequestException = class extends HttpException_default {
+  constructor(message) {
+    super(400, message);
+    this.message = message;
+  }
+};
+var BadRequest_default = BadRequestException;
+
+// src/middleware/validation.middleware.ts
+var import_zod2 = require("zod");
+var validationMiddleware = (schema) => (req, _, next) => __async(void 0, null, function* () {
+  try {
+    yield schema.parseAsync({
+      body: req.body,
+      query: req.query,
+      params: req.params
+    });
+    return next();
+  } catch (error) {
+    if (error instanceof import_zod2.ZodError) {
+      return next(new BadRequest_default(error.issues[0].message));
+    }
+    return next(new BadRequest_default("Error in validation process."));
+  }
+});
+var validation_middleware_default = validationMiddleware;
+
+// src/blockchain/blockchain.controller.ts
+var import_client = require("@prisma/client");
+var BlockchainController = class {
+  constructor(blockchainService, userService) {
+    this.blockchainService = blockchainService;
+    this.userService = userService;
+    this.path = "/blockchain";
+    this.router = (0, import_express2.Router)();
+    this.scanBlock = (request, response, next) => __async(this, null, function* () {
+      const { email, blockNumber } = request.body;
+      try {
+        const foundUser = yield this.userService.findUserByEmail(email);
+        const blockTxHashes = yield this.blockchainService.getBlockTransactionHashes(blockNumber);
+        const blockTransactions = yield Promise.all(
+          blockTxHashes.map(
+            (txHash) => __async(this, null, function* () {
+              return this.blockchainService.getTransactionData(txHash);
+            })
+          )
+        );
+        const userDepositTransactions = blockTransactions.filter(
+          (tx) => this.blockchainService.checkValidTransaction(
+            foundUser.depositAddress,
+            tx
+          )
+        );
+        if (!userDepositTransactions.length) {
+          return response.json({
+            transactions: 0,
+            userBalance: foundUser.balance
+          });
+        }
+        const { userBalance, transactions } = yield this.blockchainService.userBlockchainDeposit(
+          foundUser.userId,
+          userDepositTransactions.map(
+            (tx) => this.blockchainService.parseToTransactionDto(
+              tx,
+              import_client.TransactionType.DEPOSIT
+            )
+          )
+        );
+        return response.json({
+          transactions,
+          userBalance
+        });
+      } catch (err) {
+        next(err);
+      }
+    });
+    this.initializeRoutes();
+  }
+  initializeRoutes() {
+    this.router.post(
+      `${this.path}/scan-block`,
+      validation_middleware_default(scanBlockRequestSchema),
+      this.scanBlock
+    );
+  }
+};
+var blockchain_controller_default = BlockchainController;
+
+// src/blockchain/blockchain.service.ts
+var import_ethers = require("ethers");
+
 // src/exceptions/NotFound.ts
 var NotFoundException = class extends HttpException_default {
   constructor(message) {
@@ -123,6 +220,20 @@ var NotFoundException = class extends HttpException_default {
   }
 };
 var NotFound_default = NotFoundException;
+
+// src/services/prisma.service.ts
+var import_client2 = require("@prisma/client");
+var PrismaService = class _PrismaService {
+  constructor() {
+  }
+  static getPrisma() {
+    if (!_PrismaService.prisma) {
+      _PrismaService.prisma = new import_client2.PrismaClient();
+    }
+    return _PrismaService.prisma;
+  }
+};
+var prisma_service_default = PrismaService;
 
 // src/blockchain/blockchain.service.ts
 var BlockchainService = class {
@@ -167,127 +278,36 @@ var BlockchainService = class {
         amount: bigNumberAmount,
         wallet: transaction.from,
         type,
-        transaction_hash: transaction.hash,
-        transaction_index: transaction.index
+        blockNumber: transaction.blockNumber,
+        transactionHash: transaction.hash,
+        transactionIndex: transaction.index
       };
     };
+    this.userBlockchainDeposit = (userId, transactions) => __async(this, null, function* () {
+      return yield this.prisma.$transaction((tx) => __async(this, null, function* () {
+        const depositAmount = transactions.reduce(
+          (acc, tx2) => acc + tx2.amount,
+          0
+        );
+        const updatedUser = yield tx.user.update({
+          where: { userId },
+          data: { balance: { increment: depositAmount } },
+          select: { balance: true }
+        });
+        const transactionCount = yield tx.transaction.createMany({
+          data: transactions
+        });
+        return {
+          transactions: transactionCount.count,
+          userBalance: updatedUser.balance
+        };
+      }));
+    });
     this.provider = new import_ethers.ethers.AlchemyProvider("sepolia", env.SEPOLIA_API_KEY);
+    this.prisma = prisma_service_default.getPrisma();
   }
 };
 var blockchain_service_default = BlockchainService;
-
-// src/blockchain/blockchain.validation.ts
-var import_zod = require("zod");
-var scanBlockRequestSchema = import_zod.z.object({
-  body: import_zod.z.object({
-    blockNumber: import_zod.z.number(),
-    email: import_zod.z.string()
-  })
-});
-var createTransactionSchema = import_zod.z.object({
-  amount: import_zod.z.number(),
-  wallet: import_zod.z.string(),
-  type: import_zod.z.enum(["DEPOSIT" /* DEPOSIT */, "WITHDRAW" /* WITHDRAW */]),
-  transaction_hash: import_zod.z.string(),
-  transaction_index: import_zod.z.number()
-});
-var transactionSchema = import_zod.z.object({
-  transaction_id: import_zod.z.number(),
-  amount: import_zod.z.number(),
-  wallet: import_zod.z.string(),
-  type: import_zod.z.enum(["DEPOSIT" /* DEPOSIT */, "WITHDRAW" /* WITHDRAW */]),
-  transaction_hash: import_zod.z.string(),
-  transaction_index: import_zod.z.number(),
-  created_at: import_zod.z.date()
-});
-
-// src/exceptions/BadRequest.ts
-var BadRequestException = class extends HttpException_default {
-  constructor(message) {
-    super(400, message);
-    this.message = message;
-  }
-};
-var BadRequest_default = BadRequestException;
-
-// src/middleware/validation.middleware.ts
-var import_zod2 = require("zod");
-var validationMiddleware = (schema) => (req, _, next) => __async(void 0, null, function* () {
-  try {
-    yield schema.parseAsync({
-      body: req.body,
-      query: req.query,
-      params: req.params
-    });
-    return next();
-  } catch (error) {
-    if (error instanceof import_zod2.ZodError) {
-      return next(new BadRequest_default(error.issues[0].message));
-    }
-    return next(new BadRequest_default("Error in validation process."));
-  }
-});
-var validation_middleware_default = validationMiddleware;
-
-// src/blockchain/blockchain.controller.ts
-var BlockchainController = class {
-  constructor(blockchainService, userService) {
-    this.blockchainService = blockchainService;
-    this.userService = userService;
-    this.path = "/blockchain";
-    this.router = (0, import_express2.Router)();
-    this.scanBlock = (request, response, next) => __async(this, null, function* () {
-      const { email, blockNumber } = request.body;
-      try {
-        const foundUser = yield this.userService.findUserByEmail(email);
-        const blockTxHashes = yield this.blockchainService.getBlockTransactionHashes(blockNumber);
-        const blockTransactions = yield Promise.all(
-          blockTxHashes.map(
-            (txHash) => __async(this, null, function* () {
-              return this.blockchainService.getTransactionData(txHash);
-            })
-          )
-        );
-        const userDepositTransactions = blockTransactions.filter(
-          (tx) => this.blockchainService.checkValidTransaction(
-            foundUser.deposit_address,
-            tx
-          )
-        );
-        if (!userDepositTransactions.length) {
-          return response.json({
-            transactions: [],
-            userBalance: foundUser.balance
-          });
-        }
-        const { userBalance, transactions } = yield this.userService.userBlockchainDeposit(
-          email,
-          userDepositTransactions.map(
-            (tx) => this.blockchainService.parseToTransactionDto(
-              tx,
-              "DEPOSIT" /* DEPOSIT */
-            )
-          )
-        );
-        return response.json({
-          transactions,
-          userBalance
-        });
-      } catch (err) {
-        next(err);
-      }
-    });
-    this.initializeRoutes();
-  }
-  initializeRoutes() {
-    this.router.post(
-      `${this.path}/scan-block`,
-      validation_middleware_default(scanBlockRequestSchema),
-      this.scanBlock
-    );
-  }
-};
-var blockchain_controller_default = BlockchainController;
 
 // src/health/health.controller.ts
 var import_express3 = require("express");
@@ -316,25 +336,16 @@ var createUserRequestSchema = import_zod3.z.object({
     email: import_zod3.z.string().email()
   })
 });
-var createUserSchema = import_zod3.z.object({
-  balance: import_zod3.z.number(),
-  email: import_zod3.z.string().email(),
-  depositAddress: import_zod3.z.string(),
-  privateKey: import_zod3.z.string()
-});
-var userSchema = import_zod3.z.object({
-  user_id: import_zod3.z.number(),
-  balance: import_zod3.z.number(),
-  email: import_zod3.z.string().email(),
-  deposit_address: import_zod3.z.string(),
-  private_key: import_zod3.z.string(),
-  created_at: import_zod3.z.date()
-});
 var withdrawRequestSchema = import_zod3.z.object({
   body: import_zod3.z.object({
     withdraw_address: import_zod3.z.string(),
     withdraw_amount: import_zod3.z.number(),
     user_email: import_zod3.z.string().email()
+  })
+});
+var getWalletBalanceSchema = import_zod3.z.object({
+  params: import_zod3.z.object({
+    email: import_zod3.z.string().email()
   })
 });
 
@@ -344,19 +355,11 @@ var UserController = class {
     this.userService = userService;
     this.path = "/users";
     this.router = (0, import_express4.Router)();
-    this.withdraw = (request, response, next) => __async(this, null, function* () {
-      const requestData = request.body;
+    this.getWalletBalance = (request, response, next) => __async(this, null, function* () {
+      const email = request.params.email;
       try {
-        const successfulWithdrawal = yield this.userService.withdraw(requestData);
-        return response.json({ successfulWithdrawal });
-      } catch (err) {
-        next(err);
-      }
-    });
-    this.getUsers = (_, response, next) => __async(this, null, function* () {
-      try {
-        const users = yield this.userService.getUsers();
-        return response.json(users);
+        const walletBalance = yield this.userService.getWalletBalance(email);
+        return response.json(walletBalance);
       } catch (err) {
         next(err);
       }
@@ -370,130 +373,115 @@ var UserController = class {
         next(err);
       }
     });
+    this.withdraw = (request, response, next) => __async(this, null, function* () {
+      const requestData = request.body;
+      try {
+        const result = yield this.userService.withdraw(requestData);
+        return response.json(result);
+      } catch (err) {
+        next(err);
+      }
+    });
     this.initializeRoutes();
   }
   initializeRoutes() {
-    this.router.get(this.path, this.getUsers);
-    this.router.post(
-      `${this.path}/withdraw`,
-      validation_middleware_default(withdrawRequestSchema),
-      this.withdraw
+    this.router.get(
+      `${this.path}/:email/wallet-balance`,
+      validation_middleware_default(getWalletBalanceSchema),
+      this.getWalletBalance
     );
     this.router.post(
       this.path,
       validation_middleware_default(createUserRequestSchema),
       this.createUser
     );
+    this.router.post(
+      `${this.path}/withdraw`,
+      validation_middleware_default(withdrawRequestSchema),
+      this.withdraw
+    );
   }
 };
 var users_controller_default = UserController;
 
-// src/config/sql.ts
-var import_postgres = __toESM(require("postgres"));
-var sql = (0, import_postgres.default)(env.DATABASE_URL, {
-  host: env.POSTGRES_HOST,
-  // Postgres ip address[s] or domain name[s]
-  port: env.POSTGRES_PORT,
-  // Postgres server port[s]
-  database: env.POSTGRES_DB,
-  // Name of database to connect to
-  username: env.POSTGRES_USER,
-  // Username of database user
-  password: env.POSTGRES_PASSWORD
-  // Password of database user
-});
-var sql_default = sql;
-
-// src/users/users.queries.ts
-var createUserQuery = (_0) => __async(void 0, [_0], function* ({
-  balance,
-  email,
-  depositAddress,
-  privateKey
-}) {
-  const userRows = yield sql_default`
-      INSERT INTO users
-        (balance, email, deposit_address, private_key)
-      VALUES
-        (${balance}, ${email}, ${depositAddress}, ${privateKey})
-      RETURNING *
-    `;
-  return userRows[0];
-});
-var findUserByEmailQuery = (email) => __async(void 0, null, function* () {
-  const userRows = yield sql_default`SELECT * FROM users WHERE email = ${email}`;
-  return userRows[0];
-});
-var getUsersQuery = () => __async(void 0, null, function* () {
-  return yield sql_default`SELECT * FROM users`;
-});
-
 // src/users/users.service.ts
 var import_ethers2 = require("ethers");
+var import_client3 = require("@prisma/client");
+var import_crypto = require("crypto");
 var UserService = class {
   constructor() {
-    this.getUsers = () => __async(this, null, function* () {
-      const rawUsers = yield getUsersQuery();
-      const users = yield Promise.all(
-        rawUsers.map((rawUser) => userSchema.parseAsync(rawUser))
-      );
-      return users;
-    });
-    this.withdraw = (requestData) => __async(this, null, function* () {
-      const { withdraw_amount, user_email } = requestData;
-      return sql_default.begin((sql2) => __async(this, null, function* () {
-        const userRows = yield sql2`SELECT user_id, balance, deposit_address FROM users WHERE email = ${user_email} FOR UPDATE`;
-        if (userRows.length === 0) {
-          throw new NotFound_default("User not found");
-        }
-        const userRow = userRows[0];
-        if (userRow.balance < withdraw_amount) {
-          throw new BadRequest_default("Insufficient balance");
-        }
-        yield sql2`UPDATE users SET balance = balance - ${withdraw_amount} WHERE user_id = ${userRow.user_id}`;
-        yield sql2`INSERT INTO transactions (wallet, amount, type) VALUES (${userRow.deposit_address}, ${withdraw_amount}, ${"WITHDRAW" /* WITHDRAW */})`;
-        return { userBalance: userRow.balance - withdraw_amount };
-      }));
-    });
     this.findUserByEmail = (email) => __async(this, null, function* () {
-      const rawUser = yield findUserByEmailQuery(email);
-      if (!rawUser)
+      const user = yield this.prisma.user.findUnique({
+        where: { email }
+      });
+      if (!user)
         throw new NotFound_default("User not found");
-      return userSchema.parse(rawUser);
+      return user;
     });
     this.createUser = (requestData) => __async(this, null, function* () {
       const wallet = import_ethers2.ethers.Wallet.createRandom();
-      const userData = {
-        balance: 0,
-        depositAddress: wallet.address,
-        privateKey: wallet.privateKey,
-        email: requestData.email
-      };
-      return yield createUserQuery(userData);
+      return yield this.prisma.user.create({
+        data: {
+          balance: 0,
+          depositAddress: wallet.address,
+          privateKey: wallet.privateKey,
+          email: requestData.email
+        }
+      });
     });
-    this.userBlockchainDeposit = (email, transactions) => __async(this, null, function* () {
-      return sql_default.begin((sql2) => __async(this, null, function* () {
-        const transactionRows = [];
-        const userRows = yield sql2`SELECT user_id, balance FROM users WHERE email = ${email} FOR UPDATE`;
-        if (userRows.length === 0) {
-          throw new NotFound_default("User not found");
+    this.withdraw = (requestData) => __async(this, null, function* () {
+      return yield this.prisma.$transaction((tx) => __async(this, null, function* () {
+        const { withdraw_amount, user_email, withdraw_address } = requestData;
+        yield tx.$executeRaw`SELECT * FROM users WHERE email = ${user_email} FOR UPDATE`;
+        const updatedUser = yield tx.user.update({
+          where: { email: user_email },
+          data: { balance: { decrement: withdraw_amount } },
+          select: { balance: true }
+        });
+        if (updatedUser.balance < 0) {
+          throw new BadRequest_default("Insufficient funds");
         }
-        for (const tx of transactions) {
-          const existingTx = yield sql2`SELECT 1 FROM transactions WHERE transaction_hash = ${tx.transaction_hash} AND type = ${"DEPOSIT" /* DEPOSIT */}`;
-          if (existingTx.length > 0) {
-            continue;
+        const hash = (0, import_crypto.createHash)("sha256");
+        hash.update(`${user_email}-${withdraw_address}-${Date.now()}`);
+        const transactionHash = `0x${hash.digest("hex")}`;
+        const newTransaction = yield tx.transaction.create({
+          data: {
+            amount: withdraw_amount,
+            type: import_client3.TransactionType.WITHDRAW,
+            wallet: withdraw_address,
+            transactionHash,
+            transactionIndex: 0,
+            blockNumber: 0
           }
-          yield sql2`UPDATE users SET balance = balance + ${tx.amount} WHERE user_id = ${userRows[0].user_id}`;
-          const [txRow] = yield sql2`INSERT INTO transactions ${sql2(
-            tx
-          )} RETURNING *`;
-          transactionRows.push(txRow);
-        }
-        const resultBalance = yield sql2`SELECT balance FROM users WHERE email = ${email}`;
-        const userEndBalance = resultBalance[0].balance;
-        return { transactions: transactionRows, userBalance: userEndBalance };
+        });
+        return {
+          userBalance: updatedUser.balance,
+          transaction: newTransaction
+        };
       }));
     });
+    this.getWalletBalance = (email) => __async(this, null, function* () {
+      const user = yield this.prisma.user.findUnique({
+        where: { email },
+        select: { depositAddress: true, balance: true }
+      });
+      if (!user)
+        throw new NotFound_default("User not found");
+      const latestDeposit = yield this.prisma.transaction.findFirst({
+        where: { wallet: user.depositAddress, type: import_client3.TransactionType.DEPOSIT },
+        orderBy: [{ blockNumber: "desc" }, { transactionIndex: "desc" }]
+      });
+      const transactions = yield this.prisma.transaction.findMany({
+        where: { wallet: user.depositAddress }
+      });
+      return {
+        latestDeposit,
+        walletAddress: user.depositAddress,
+        transactions,
+        balance: user.balance
+      };
+    });
+    this.prisma = prisma_service_default.getPrisma();
   }
 };
 var users_service_default = UserService;

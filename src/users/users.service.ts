@@ -1,113 +1,108 @@
-import NotFoundException from "exceptions/NotFound";
-import {
-  createUserQuery,
-  findUserByEmailQuery,
-  getUsersQuery,
-} from "./users.queries";
-import {
-  CreateUserDto,
-  CreateUserRequestDto,
-  WithdrawRequest,
-  userSchema,
-} from "./users.validation";
+import { CreateUserRequestDto, WithdrawRequest } from "./users.validation";
 import { ethers } from "ethers";
-import {
-  CreateTransactionDto,
-  Transaction,
-} from "blockchain/blockchain.validation";
-import sql from "config/sql";
-import { TransactionType } from "blockchain/blockchain.service";
+import PrismaService from "services/prisma.service";
+import { PrismaClient, TransactionType } from "@prisma/client";
 import BadRequestException from "exceptions/BadRequest";
+import NotFoundException from "exceptions/NotFound";
+import { createHash } from "crypto";
 
 class UserService {
-  public getUsers = async () => {
-    const rawUsers = await getUsersQuery();
-    const users = await Promise.all(
-      rawUsers.map((rawUser) => userSchema.parseAsync(rawUser))
-    );
-    return users;
-  };
+  private prisma: PrismaClient;
 
-  public withdraw = async (requestData: WithdrawRequest) => {
-    const { withdraw_amount, user_email } = requestData;
-
-    return sql.begin(async (sql) => {
-      const userRows =
-        await sql`SELECT user_id, balance, deposit_address FROM users WHERE email = ${user_email} FOR UPDATE`;
-
-      if (userRows.length === 0) {
-        throw new NotFoundException("User not found");
-      }
-
-      const userRow = userRows[0];
-
-      if (userRow.balance < withdraw_amount) {
-        throw new BadRequestException("Insufficient balance");
-      }
-
-      await sql`UPDATE users SET balance = balance - ${withdraw_amount} WHERE user_id = ${userRow.user_id}`;
-      await sql`INSERT INTO transactions (wallet, amount, type) VALUES (${userRow.deposit_address}, ${withdraw_amount}, ${TransactionType.WITHDRAW})`;
-
-      return { userBalance: userRow.balance - withdraw_amount };
-    });
-  };
+  constructor() {
+    this.prisma = PrismaService.getPrisma();
+  }
 
   public findUserByEmail = async (email: string) => {
-    const rawUser = await findUserByEmailQuery(email);
-    if (!rawUser) throw new NotFoundException("User not found");
-    return userSchema.parse(rawUser);
+    const user = await this.prisma.user.findUnique({
+      where: { email },
+    });
+
+    if (!user) throw new NotFoundException("User not found");
+
+    return user;
   };
 
   public createUser = async (requestData: CreateUserRequestDto) => {
     const wallet = ethers.Wallet.createRandom();
 
-    const userData: CreateUserDto = {
-      balance: 0,
-      depositAddress: wallet.address,
-      privateKey: wallet.privateKey,
-      email: requestData.email,
-    };
-    return await createUserQuery(userData);
+    return await this.prisma.user.create({
+      data: {
+        balance: 0,
+        depositAddress: wallet.address,
+        privateKey: wallet.privateKey,
+        email: requestData.email,
+      },
+    });
   };
 
-  public userBlockchainDeposit = async (
-    email: string,
-    transactions: CreateTransactionDto[]
-  ) => {
-    return sql.begin(async (sql) => {
-      const transactionRows: Transaction[] = [];
+  public withdraw = async (requestData: WithdrawRequest) => {
+    return await this.prisma.$transaction(async (tx) => {
+      const { withdraw_amount, user_email, withdraw_address } = requestData;
 
-      // Prevent writing to the transactions table while reading
-      const userRows =
-        await sql`SELECT user_id, balance FROM users WHERE email = ${email} FOR UPDATE`;
+      // Locks single row for update
+      await tx.$executeRaw`SELECT * FROM users WHERE email = ${user_email} FOR UPDATE`;
 
-      if (userRows.length === 0) {
-        throw new NotFoundException("User not found");
+      const updatedUser = await tx.user.update({
+        where: { email: user_email },
+        data: { balance: { decrement: withdraw_amount } },
+        select: { balance: true },
+      });
+
+      if (updatedUser.balance < 0) {
+        throw new BadRequestException("Insufficient funds");
       }
 
-      for (const tx of transactions) {
-        const existingTx =
-          await sql`SELECT 1 FROM transactions WHERE transaction_hash = ${tx.transaction_hash} AND type = ${TransactionType.DEPOSIT}`;
+      // @dev Hash collision with blockchain transactions is possible, but very unlikely
+      const hash = createHash("sha256");
+      hash.update(`${user_email}-${withdraw_address}-${Date.now()}`);
+      const transactionHash = `0x${hash.digest("hex")}`;
 
-        if (existingTx.length > 0) {
-          continue;
-        }
+      const newTransaction = await tx.transaction.create({
+        data: {
+          amount: withdraw_amount,
+          type: TransactionType.WITHDRAW,
+          wallet: withdraw_address,
+          transactionHash,
+          transactionIndex: 0,
+          blockNumber: 0,
+        },
+      });
 
-        await sql`UPDATE users SET balance = balance + ${tx.amount} WHERE user_id = ${userRows[0].user_id}`;
-        const [txRow] = await sql`INSERT INTO transactions ${sql(
-          tx
-        )} RETURNING *`;
-
-        transactionRows.push(txRow as Transaction);
-      }
-
-      const resultBalance =
-        await sql`SELECT balance FROM users WHERE email = ${email}`;
-
-      const userEndBalance = resultBalance[0].balance;
-
-      return { transactions: transactionRows, userBalance: userEndBalance };
+      return {
+        userBalance: updatedUser.balance,
+        transaction: newTransaction,
+      };
     });
+  };
+
+  public getWalletBalance = async (email: string) => {
+    const user = await this.prisma.user.findUnique({
+      where: { email },
+      select: { depositAddress: true, balance: true },
+    });
+
+    if (!user) throw new NotFoundException("User not found");
+
+    /**
+     * @dev Since deposits are coming only from blockchain,
+     *      we can sort them by block number and transaction index.
+     */
+    const latestDeposit = await this.prisma.transaction.findFirst({
+      where: { wallet: user.depositAddress, type: TransactionType.DEPOSIT },
+      orderBy: [{ blockNumber: "desc" }, { transactionIndex: "desc" }],
+    });
+
+    const transactions = await this.prisma.transaction.findMany({
+      where: { wallet: user.depositAddress },
+    });
+
+    return {
+      latestDeposit,
+      walletAddress: user.depositAddress,
+      transactions,
+      balance: user.balance,
+    };
   };
 }
 

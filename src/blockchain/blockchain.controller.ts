@@ -1,11 +1,12 @@
 import { Router, NextFunction, Request, Response } from "express";
-import BlockchainService, { TransactionType } from "./blockchain.service";
+import BlockchainService from "./blockchain.service";
 import UserService from "users/users.service";
 import {
   ScanBlockRequestDto,
   scanBlockRequestSchema,
 } from "./blockchain.validation";
 import validationMiddleware from "middleware/validation.middleware";
+import { TransactionType } from "@prisma/client";
 
 class BlockchainController {
   public path = "/blockchain";
@@ -51,22 +52,22 @@ class BlockchainController {
       // Filter out transactions that are not valid
       const userDepositTransactions = blockTransactions.filter((tx) =>
         this.blockchainService.checkValidTransaction(
-          foundUser.deposit_address,
+          foundUser.depositAddress,
           tx
         )
       );
 
       if (!userDepositTransactions.length) {
         return response.json({
-          transactions: [],
+          transactions: 0,
           userBalance: foundUser.balance,
         });
       }
 
       // Update user balance
       const { userBalance, transactions } =
-        await this.userService.userBlockchainDeposit(
-          email,
+        await this.blockchainService.userBlockchainDeposit(
+          foundUser.userId,
           userDepositTransactions.map((tx) =>
             this.blockchainService.parseToTransactionDto(
               tx,

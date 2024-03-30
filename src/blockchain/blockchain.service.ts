@@ -6,21 +6,20 @@ import {
   formatUnits,
 } from "ethers";
 import NotFoundException from "exceptions/NotFound";
-import { CreateTransactionDto } from "./blockchain.validation";
-
-export enum TransactionType {
-  DEPOSIT = "DEPOSIT",
-  WITHDRAW = "WITHDRAW",
-}
+import { Prisma, PrismaClient, TransactionType } from "@prisma/client";
+import PrismaService from "services/prisma.service";
 
 class BlockchainService {
   private provider: AlchemyProvider;
+  private prisma: PrismaClient;
+
   private USDC_CONTRACT_ADDRESS = "0x94a9D9AC8a22534E3FaCa9F4e7F2E2cf85d5E4C8";
   private USDC_DECIMALS = 6;
   private TRANSACTION_SUCCESS_STATUS = 1;
 
   constructor() {
     this.provider = new ethers.AlchemyProvider("sepolia", env.SEPOLIA_API_KEY);
+    this.prisma = PrismaService.getPrisma();
   }
 
   public getBlockTransactionHashes = async (blockNumber: number) => {
@@ -59,7 +58,7 @@ class BlockchainService {
   public parseToTransactionDto = (
     transaction: TransactionReceipt,
     type: TransactionType
-  ): CreateTransactionDto => {
+  ) => {
     const logs = transaction.logs;
 
     const hexAmount = logs[0].data;
@@ -72,9 +71,44 @@ class BlockchainService {
       amount: bigNumberAmount,
       wallet: transaction.from,
       type,
-      transaction_hash: transaction.hash,
-      transaction_index: transaction.index,
+      blockNumber: transaction.blockNumber,
+      transactionHash: transaction.hash,
+      transactionIndex: transaction.index,
     };
+  };
+
+  public userBlockchainDeposit = async (
+    userId: number,
+    transactions: Prisma.TransactionCreateInput[]
+  ) => {
+    return await this.prisma.$transaction(async (tx) => {
+      // Accumulate deposit amount
+      const depositAmount = transactions.reduce(
+        (acc, tx) => acc + tx.amount,
+        0
+      );
+
+      // Increment user balance
+      const updatedUser = await tx.user.update({
+        where: { userId },
+        data: { balance: { increment: depositAmount } },
+        select: { balance: true },
+      });
+
+      /**
+       * Create multiple transactions in a single query.
+       * Transactions use tx hash for idempotency key on database level. Cannot be used across contracts.
+       * Q - If it is possible to create transactions any other way, then adding extra field like `deposited` should be considered.
+       */
+      const transactionCount = await tx.transaction.createMany({
+        data: transactions,
+      });
+
+      return {
+        transactions: transactionCount.count,
+        userBalance: updatedUser.balance,
+      };
+    });
   };
 }
 
