@@ -180,6 +180,15 @@ var BlockchainController = class {
             userBalance: foundUser.balance
           });
         }
+        const existingTransactions = yield this.blockchainService.checkIfTransactionsAlreadyStored(
+          userDepositTransactions.map((tx) => tx.hash)
+        );
+        if (existingTransactions) {
+          return response.json({
+            transactions: 0,
+            userBalance: foundUser.balance
+          });
+        }
         const depositTransactionDTOs = userDepositTransactions.map(
           (tx) => this.blockchainService.parseToTransactionDto(
             tx,
@@ -288,6 +297,12 @@ var BlockchainService = class {
         transactionIndex: transaction.index
       };
     };
+    this.checkIfTransactionsAlreadyStored = (transactionHashes) => __async(this, null, function* () {
+      const existingTransactions = yield this.prisma.transaction.findFirst({
+        where: { transactionHash: { in: transactionHashes } }
+      });
+      return !!existingTransactions;
+    });
     this.userBlockchainDeposit = (userId, transactions) => __async(this, null, function* () {
       return yield this.prisma.$transaction((tx) => __async(this, null, function* () {
         const depositAmount = transactions.reduce(
@@ -434,41 +449,49 @@ var UserService = class {
       });
     });
     this.withdraw = (requestData) => __async(this, null, function* () {
-      return yield this.prisma.$transaction((tx) => __async(this, null, function* () {
-        const { withdraw_amount, user_email, withdraw_address } = requestData;
-        yield tx.$executeRaw`SELECT * FROM users WHERE email = ${user_email} FOR UPDATE`;
-        yield this.findUserByEmail(user_email);
-        const bigNumberAmount = new import_client4.Prisma.Decimal(
-          (0, import_ethers2.formatUnits)(withdraw_amount, USDC_TOKEN_DECIMALS)
-        );
-        const updatedUser = yield tx.user.update({
-          where: { email: user_email },
-          data: { balance: { decrement: bigNumberAmount } },
-          select: { balance: true }
-        });
-        if (updatedUser.balance.lessThan(0)) {
-          throw new BadRequest_default("Insufficient funds");
-        }
-        const hash = (0, import_crypto.createHash)("sha256");
-        hash.update(
-          `${user_email}-${withdraw_address}-${withdraw_amount}-${Date.now()}`
-        );
-        const transactionHash = `0x${hash.digest("hex")}`;
-        const newTransaction = yield tx.transaction.create({
-          data: {
-            amount: withdraw_amount,
-            type: import_client4.TransactionType.WITHDRAW,
-            wallet: withdraw_address,
-            transactionHash,
-            transactionIndex: 0,
-            blockNumber: 0
+      return yield this.prisma.$transaction(
+        (tx) => __async(this, null, function* () {
+          const { withdraw_amount, user_email, withdraw_address } = requestData;
+          if (new import_client4.Prisma.Decimal(withdraw_amount).lessThanOrEqualTo(0)) {
+            throw new BadRequest_default("Invalid amount");
           }
-        });
-        return {
-          userBalance: updatedUser.balance,
-          transaction: newTransaction
-        };
-      }));
+          yield tx.$executeRaw`SELECT * FROM users WHERE email = ${user_email} FOR UPDATE`;
+          const user = yield this.findUserByEmail(user_email);
+          const bigNumberAmount = new import_client4.Prisma.Decimal(
+            (0, import_ethers2.formatUnits)(withdraw_amount, USDC_TOKEN_DECIMALS)
+          );
+          if (user.balance.minus(bigNumberAmount).lessThan(0)) {
+            throw new BadRequest_default("Insufficient funds");
+          }
+          const updatedUser = yield tx.user.update({
+            where: { email: user_email },
+            data: { balance: { decrement: bigNumberAmount } },
+            select: { balance: true }
+          });
+          const hash = (0, import_crypto.createHash)("sha256");
+          hash.update(
+            `${user_email}-${withdraw_address}-${withdraw_amount}-${Date.now()}`
+          );
+          const transactionHash = `0x${hash.digest("hex")}`;
+          const newTransaction = yield tx.transaction.create({
+            data: {
+              amount: withdraw_amount,
+              type: import_client4.TransactionType.WITHDRAW,
+              wallet: withdraw_address,
+              transactionHash,
+              transactionIndex: 0,
+              blockNumber: 0
+            }
+          });
+          return {
+            userBalance: updatedUser.balance,
+            transaction: newTransaction
+          };
+        }),
+        {
+          isolationLevel: import_client4.Prisma.TransactionIsolationLevel.Serializable
+        }
+      );
     });
     this.getWalletBalance = (email) => __async(this, null, function* () {
       const user = yield this.findUserByEmail(email);

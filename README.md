@@ -35,4 +35,6 @@ This should be more then enough for out app needs.
 
 #### Notes
 
+Private key should be encrypted or hosted on AWS Secret manager service.
+
 Block numbers: 5583540, 5592426

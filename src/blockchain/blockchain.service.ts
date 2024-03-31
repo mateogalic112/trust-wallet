@@ -78,11 +78,21 @@ class BlockchainService {
     };
   };
 
+  public checkIfTransactionsAlreadyStored = async (
+    transactionHashes: string[]
+  ) => {
+    const existingTransactions = await this.prisma.transaction.findFirst({
+      where: { transactionHash: { in: transactionHashes } },
+    });
+
+    return !!existingTransactions;
+  };
+
   public userBlockchainDeposit = async (
     userId: number,
     transactions: Prisma.TransactionCreateInput[]
   ) => {
-    // @dev No need for locks, since we are only incrementing balance
+    // @dev No need for locks, since we are reading from immutable block
     return await this.prisma.$transaction(async (tx) => {
       // Accumulate deposit amount
       const depositAmount = transactions.reduce(
@@ -98,9 +108,9 @@ class BlockchainService {
       });
 
       /**
-       * @dev    Transactions use tx hash for idempotency key on database level.
+       * @dev    Transactions use tx hash for preventing duplicates on a database level.
        *         Blockchain is a single source of truth.
-       * @notice Key is not valid across different blockchains!
+       * @notice Hash is not unique across different blockchains!
        */
       const transactionCount = await tx.transaction.createMany({
         data: transactions,

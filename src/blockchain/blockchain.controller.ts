@@ -65,6 +65,18 @@ class BlockchainController {
         });
       }
 
+      // Check if transactions already stored
+      const existingTransactions =
+        await this.blockchainService.checkIfTransactionsAlreadyStored(
+          userDepositTransactions.map((tx) => tx.hash)
+        );
+      if (existingTransactions) {
+        return response.json({
+          transactions: 0,
+          userBalance: foundUser.balance,
+        });
+      }
+
       // Parse transactions to DTOs
       const depositTransactionDTOs = userDepositTransactions.map((tx) =>
         this.blockchainService.parseToTransactionDto(
