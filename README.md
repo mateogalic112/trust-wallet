@@ -2,30 +2,37 @@
 
 Only one wallet address per user?
 
-Block numbers: 5583540, 5592426
+## Project setup info
 
-## Notes
+- Sepolia testnet for blockchain.
+- Alchemy for RPC provider to interact with Sepolia.
+- AAVE USDC faucet to deposit tokens to my wallet address.
 
-Some key notes and considirations that I have notices while working on project
+1. Install project packages using `yarn`, make sure you are in root directory.
 
-### Accounting
+```bash
+    yarn install
+```
+
+2. Use Docker to host database locally, run this command to spin up quick Postgresql DB
+
+```bash
+    docker run -d --name trust-wallet-dev -e POSTGRES_PASSWORD=postgres -e POSTGRES_USER=postgres -e POSTGRES_DB=trust-wallet-dev -p 5432:5432 postgres
+```
+
+3. Create `.env` file in the root from `.env.example` file, please refer to Alchemy docs to create SEPOLIA_API_KEY or I can share mine.
+
+4. Run Prisma migrations on Postgresql DB
+
+```bash
+    npx prisma migrate dev
+```
+
+## Accounting
 
 Working with decimals in JavaScript is HARD. Prisma offers `Decimal` field type which relies on `decimal.js` library for storing and applying calculations on decimal numbers. We can store 18 digit number + 6 decimal places.
 This should be more then enough for out app needs.
 
-### Endpoint description
+#### Notes
 
-1. Create User
-
-- I have used `email` as request param.
-- I have used `ethers` library for creating random wallet fo user.
-
-2. Scan Block
-
-- I have used `email` and `blocknumber` as request params.
-- Since we are dealing with only one blockchain, we can rely on transaction hash as idempotency key.
-  That just means, we cannot get double balance increments because of `UNIQUE` flag on tx hash.
-
-3. Withdraw
-
-- I think we need some kind of nonce as well, that will come client side for preventing double spending problem. I have used `withdrawNonce` that increments every time we process withdraw request.
+Block numbers: 5583540, 5592426
