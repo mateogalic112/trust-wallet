@@ -60,6 +60,9 @@ class UserService {
           throw new BadRequestException("Insufficient funds");
         }
 
+        // @dev Test double spending with delay
+        // await new Promise((resolve) => setTimeout(resolve, 3000));
+
         // Decrement user balance
         const updatedUser = await tx.user.update({
           where: { email: user_email },
