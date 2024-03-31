@@ -99,6 +99,7 @@ class BlockchainService {
 
       /**
        * @dev    Transactions use tx hash for idempotency key on database level.
+       *         Blockchain is a single source of truth.
        * @notice Key is not valid across different blockchains!
        */
       const transactionCount = await tx.transaction.createMany({

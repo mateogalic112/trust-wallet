@@ -427,7 +427,6 @@ var UserService = class {
       const wallet = import_ethers2.ethers.Wallet.createRandom();
       return yield this.prisma.user.create({
         data: {
-          balance: 0,
           depositAddress: wallet.address,
           privateKey: wallet.privateKey,
           email: requestData.email
@@ -437,10 +436,11 @@ var UserService = class {
     this.withdraw = (requestData) => __async(this, null, function* () {
       return yield this.prisma.$transaction((tx) => __async(this, null, function* () {
         const { withdraw_amount, user_email, withdraw_address } = requestData;
+        yield tx.$executeRaw`SELECT * FROM users WHERE email = ${user_email} FOR UPDATE`;
+        yield this.findUserByEmail(user_email);
         const bigNumberAmount = new import_client4.Prisma.Decimal(
           (0, import_ethers2.formatUnits)(withdraw_amount, USDC_TOKEN_DECIMALS)
         );
-        yield tx.$executeRaw`SELECT * FROM users WHERE email = ${user_email} FOR UPDATE`;
         const updatedUser = yield tx.user.update({
           where: { email: user_email },
           data: { balance: { decrement: bigNumberAmount } },
@@ -450,7 +450,9 @@ var UserService = class {
           throw new BadRequest_default("Insufficient funds");
         }
         const hash = (0, import_crypto.createHash)("sha256");
-        hash.update(`${user_email}-${withdraw_address}-${Date.now()}`);
+        hash.update(
+          `${user_email}-${withdraw_address}-${withdraw_amount}-${Date.now()}`
+        );
         const transactionHash = `0x${hash.digest("hex")}`;
         const newTransaction = yield tx.transaction.create({
           data: {
@@ -469,12 +471,7 @@ var UserService = class {
       }));
     });
     this.getWalletBalance = (email) => __async(this, null, function* () {
-      const user = yield this.prisma.user.findUnique({
-        where: { email },
-        select: { depositAddress: true, balance: true }
-      });
-      if (!user)
-        throw new NotFound_default("User not found");
+      const user = yield this.findUserByEmail(email);
       const latestDeposit = yield this.prisma.transaction.findFirst({
         where: { wallet: user.depositAddress, type: import_client4.TransactionType.DEPOSIT },
         orderBy: [{ blockNumber: "desc" }, { transactionIndex: "desc" }]

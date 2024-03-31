@@ -29,7 +29,6 @@ class UserService {
 
     return await this.prisma.user.create({
       data: {
-        balance: 0,
         depositAddress: wallet.address,
         privateKey: wallet.privateKey,
         email: requestData.email,
@@ -41,12 +40,15 @@ class UserService {
     return await this.prisma.$transaction(async (tx) => {
       const { withdraw_amount, user_email, withdraw_address } = requestData;
 
+      // Locks single row for update
+      await tx.$executeRaw`SELECT * FROM users WHERE email = ${user_email} FOR UPDATE`;
+
+      // Check if user exists
+      await this.findUserByEmail(user_email);
+
       const bigNumberAmount = new Prisma.Decimal(
         formatUnits(withdraw_amount, USDC_TOKEN_DECIMALS)
       );
-
-      // Locks single row for update
-      await tx.$executeRaw`SELECT * FROM users WHERE email = ${user_email} FOR UPDATE`;
 
       const updatedUser = await tx.user.update({
         where: { email: user_email },
@@ -60,7 +62,9 @@ class UserService {
 
       // @dev Hash collision with blockchain transactions is possible, but very unlikely
       const hash = createHash("sha256");
-      hash.update(`${user_email}-${withdraw_address}-${Date.now()}`);
+      hash.update(
+        `${user_email}-${withdraw_address}-${withdraw_amount}-${Date.now()}`
+      );
       const transactionHash = `0x${hash.digest("hex")}`;
 
       const newTransaction = await tx.transaction.create({
@@ -82,12 +86,7 @@ class UserService {
   };
 
   public getWalletBalance = async (email: string) => {
-    const user = await this.prisma.user.findUnique({
-      where: { email },
-      select: { depositAddress: true, balance: true },
-    });
-
-    if (!user) throw new NotFoundException("User not found");
+    const user = await this.findUserByEmail(email);
 
     /**
      * @dev Since deposits are coming only from blockchain,

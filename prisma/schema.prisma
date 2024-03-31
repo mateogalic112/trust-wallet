@@ -15,7 +15,7 @@ datasource db {
 
 model User {
   userId         Int      @id @default(autoincrement()) @map("user_id")
-  balance        Decimal  @db.Decimal(24, 6) // Up to 24 digits in total, 6 of which are after the decimal point
+  balance        Decimal  @default(0) @db.Decimal(24, 6) // Up to 24 digits in total, 6 of which are after the decimal point
   email          String   @unique
   depositAddress String   @unique @map("deposit_address")
   privateKey     String   @unique @map("private_key")
