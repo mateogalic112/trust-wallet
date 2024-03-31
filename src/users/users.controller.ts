@@ -1,4 +1,3 @@
-import { email } from "envalid";
 import { NextFunction, Router, Request, Response } from "express";
 import validationMiddleware from "middleware/validation.middleware";
 import {
@@ -13,6 +12,9 @@ import UserService from "./users.service";
 class UserController {
   public path = "/users";
   public router = Router();
+
+  // In real world we could use Redis for idempotency key storage
+  private idempotencyCache = new Map<string, boolean>();
 
   constructor(private readonly userService: UserService) {
     this.initializeRoutes();
@@ -71,9 +73,26 @@ class UserController {
     response: Response,
     next: NextFunction
   ) => {
-    const requestData: WithdrawRequest = request.body;
+    //check if the request has been cached already.
+    const idempotencyKey = request.headers["x-idempotency-key"];
+    if (!idempotencyKey) {
+      return response
+        .status(400)
+        .json({ message: "Idempotency key is required" });
+    }
+
+    if (this.idempotencyCache.has(idempotencyKey as string)) {
+      return response.status(304).json({ message: "Not Modified" });
+    }
+
+    this.idempotencyCache.set(idempotencyKey as string, true);
+
     try {
+      const requestData: WithdrawRequest = request.body;
       const result = await this.userService.withdraw(requestData);
+
+      this.idempotencyCache.delete(idempotencyKey as string);
+
       return response.json(result);
     } catch (err) {
       next(err);
