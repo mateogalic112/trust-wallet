@@ -57,6 +57,7 @@ class BlockchainController {
         )
       );
 
+      // If no valid transactions found, return user balance
       if (!userDepositTransactions.length) {
         return response.json({
           transactions: 0,
@@ -64,16 +65,19 @@ class BlockchainController {
         });
       }
 
+      // Parse transactions to DTOs
+      const depositTransactionDTOs = userDepositTransactions.map((tx) =>
+        this.blockchainService.parseToTransactionDto(
+          tx,
+          TransactionType.DEPOSIT
+        )
+      );
+
       // Update user balance
       const { userBalance, transactions } =
         await this.blockchainService.userBlockchainDeposit(
           foundUser.userId,
-          userDepositTransactions.map((tx) =>
-            this.blockchainService.parseToTransactionDto(
-              tx,
-              TransactionType.DEPOSIT
-            )
-          )
+          depositTransactionDTOs
         );
 
       return response.json({

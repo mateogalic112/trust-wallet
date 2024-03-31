@@ -8,14 +8,15 @@ import {
 import NotFoundException from "exceptions/NotFound";
 import { Prisma, PrismaClient, TransactionType } from "@prisma/client";
 import PrismaService from "services/prisma.service";
+import {
+  TRANSACTION_SUCCESS_STATUS,
+  USDC_CONTRACT_ADDRESS,
+  USDC_TOKEN_DECIMALS,
+} from "./blockchain.utils";
 
 class BlockchainService {
   private provider: AlchemyProvider;
   private prisma: PrismaClient;
-
-  private USDC_CONTRACT_ADDRESS = "0x94a9D9AC8a22534E3FaCa9F4e7F2E2cf85d5E4C8";
-  private USDC_DECIMALS = 6;
-  private TRANSACTION_SUCCESS_STATUS = 1;
 
   constructor() {
     this.provider = new ethers.AlchemyProvider("sepolia", env.SEPOLIA_API_KEY);
@@ -46,11 +47,11 @@ class BlockchainService {
   ) => {
     if (transaction.from !== userWalletAddress) return false;
 
-    const isUSDCTransfer =
-      transaction.logs[0].address === this.USDC_CONTRACT_ADDRESS;
-    if (!isUSDCTransfer) return false;
+    const isUSDCContract =
+      transaction.logs[0].address === USDC_CONTRACT_ADDRESS;
+    if (!isUSDCContract) return false;
 
-    if (transaction.status !== this.TRANSACTION_SUCCESS_STATUS) return false;
+    if (transaction.status !== TRANSACTION_SUCCESS_STATUS) return false;
 
     return true;
   };
@@ -61,10 +62,10 @@ class BlockchainService {
   ) => {
     const logs = transaction.logs;
 
-    const hexAmount = logs[0].data;
-    const bigNumberAmount = parseInt(
-      formatUnits(hexAmount, this.USDC_DECIMALS),
-      10
+    const hexAmount = logs[0].data; // USDC amount stored in transaction (0x00000000000000000000000000000000000000000000000000000002540be400)
+    // Parse amount with USDC decimals
+    const bigNumberAmount = new Prisma.Decimal(
+      formatUnits(hexAmount, USDC_TOKEN_DECIMALS)
     );
 
     return {
@@ -81,11 +82,12 @@ class BlockchainService {
     userId: number,
     transactions: Prisma.TransactionCreateInput[]
   ) => {
+    // @dev No need for locks, since we are only incrementing balance
     return await this.prisma.$transaction(async (tx) => {
       // Accumulate deposit amount
       const depositAmount = transactions.reduce(
-        (acc, tx) => acc + tx.amount,
-        0
+        (acc, tx) => acc.add(tx.amount as Prisma.Decimal),
+        new Prisma.Decimal(0)
       );
 
       // Increment user balance
@@ -96,9 +98,8 @@ class BlockchainService {
       });
 
       /**
-       * Create multiple transactions in a single query.
-       * Transactions use tx hash for idempotency key on database level. Cannot be used across contracts.
-       * Q - If it is possible to create transactions any other way, then adding extra field like `deposited` should be considered.
+       * @dev    Transactions use tx hash for idempotency key on database level.
+       * @notice Key is not valid across different blockchains!
        */
       const transactionCount = await tx.transaction.createMany({
         data: transactions,

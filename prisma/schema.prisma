@@ -15,7 +15,7 @@ datasource db {
 
 model User {
   userId         Int      @id @default(autoincrement()) @map("user_id")
-  balance        Int      @default(0)
+  balance        Decimal  @db.Decimal(24, 6) // Up to 24 digits in total, 6 of which are after the decimal point
   email          String   @unique
   depositAddress String   @unique @map("deposit_address")
   privateKey     String   @unique @map("private_key")
@@ -26,7 +26,7 @@ model User {
 
 model Transaction {
   transactionId    Int             @id @default(autoincrement()) @map("transaction_id")
-  amount           Int
+  amount           Decimal         @db.Decimal(24, 6) // Up to 24 digits in total, 6 of which are after the decimal point
   wallet           String
   type             TransactionType
   blockNumber      Int             @map("block_number")

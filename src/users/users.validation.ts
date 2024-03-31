@@ -13,7 +13,7 @@ export type CreateUserRequestDto = z.infer<
 export const withdrawRequestSchema = z.object({
   body: z.object({
     withdraw_address: z.string(),
-    withdraw_amount: z.number(),
+    withdraw_amount: z.string(),
     user_email: z.string().email(),
   }),
 });

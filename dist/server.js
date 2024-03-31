@@ -180,14 +180,15 @@ var BlockchainController = class {
             userBalance: foundUser.balance
           });
         }
+        const depositTransactionDTOs = userDepositTransactions.map(
+          (tx) => this.blockchainService.parseToTransactionDto(
+            tx,
+            import_client.TransactionType.DEPOSIT
+          )
+        );
         const { userBalance, transactions } = yield this.blockchainService.userBlockchainDeposit(
           foundUser.userId,
-          userDepositTransactions.map(
-            (tx) => this.blockchainService.parseToTransactionDto(
-              tx,
-              import_client.TransactionType.DEPOSIT
-            )
-          )
+          depositTransactionDTOs
         );
         return response.json({
           transactions,
@@ -221,6 +222,9 @@ var NotFoundException = class extends HttpException_default {
 };
 var NotFound_default = NotFoundException;
 
+// src/blockchain/blockchain.service.ts
+var import_client3 = require("@prisma/client");
+
 // src/services/prisma.service.ts
 var import_client2 = require("@prisma/client");
 var PrismaService = class _PrismaService {
@@ -235,12 +239,14 @@ var PrismaService = class _PrismaService {
 };
 var prisma_service_default = PrismaService;
 
+// src/blockchain/blockchain.utils.ts
+var USDC_CONTRACT_ADDRESS = "0x94a9D9AC8a22534E3FaCa9F4e7F2E2cf85d5E4C8";
+var USDC_TOKEN_DECIMALS = 6;
+var TRANSACTION_SUCCESS_STATUS = 1;
+
 // src/blockchain/blockchain.service.ts
 var BlockchainService = class {
   constructor() {
-    this.USDC_CONTRACT_ADDRESS = "0x94a9D9AC8a22534E3FaCa9F4e7F2E2cf85d5E4C8";
-    this.USDC_DECIMALS = 6;
-    this.TRANSACTION_SUCCESS_STATUS = 1;
     this.getBlockTransactionHashes = (blockNumber) => __async(this, null, function* () {
       const block = yield this.provider.getBlock(blockNumber);
       if (!block) {
@@ -260,19 +266,18 @@ var BlockchainService = class {
     this.checkValidTransaction = (userWalletAddress, transaction) => {
       if (transaction.from !== userWalletAddress)
         return false;
-      const isUSDCTransfer = transaction.logs[0].address === this.USDC_CONTRACT_ADDRESS;
-      if (!isUSDCTransfer)
+      const isUSDCContract = transaction.logs[0].address === USDC_CONTRACT_ADDRESS;
+      if (!isUSDCContract)
         return false;
-      if (transaction.status !== this.TRANSACTION_SUCCESS_STATUS)
+      if (transaction.status !== TRANSACTION_SUCCESS_STATUS)
         return false;
       return true;
     };
     this.parseToTransactionDto = (transaction, type) => {
       const logs = transaction.logs;
       const hexAmount = logs[0].data;
-      const bigNumberAmount = parseInt(
-        (0, import_ethers.formatUnits)(hexAmount, this.USDC_DECIMALS),
-        10
+      const bigNumberAmount = new import_client3.Prisma.Decimal(
+        (0, import_ethers.formatUnits)(hexAmount, USDC_TOKEN_DECIMALS)
       );
       return {
         amount: bigNumberAmount,
@@ -286,8 +291,8 @@ var BlockchainService = class {
     this.userBlockchainDeposit = (userId, transactions) => __async(this, null, function* () {
       return yield this.prisma.$transaction((tx) => __async(this, null, function* () {
         const depositAmount = transactions.reduce(
-          (acc, tx2) => acc + tx2.amount,
-          0
+          (acc, tx2) => acc.add(tx2.amount),
+          new import_client3.Prisma.Decimal(0)
         );
         const updatedUser = yield tx.user.update({
           where: { userId },
@@ -339,7 +344,7 @@ var createUserRequestSchema = import_zod3.z.object({
 var withdrawRequestSchema = import_zod3.z.object({
   body: import_zod3.z.object({
     withdraw_address: import_zod3.z.string(),
-    withdraw_amount: import_zod3.z.number(),
+    withdraw_amount: import_zod3.z.string(),
     user_email: import_zod3.z.string().email()
   })
 });
@@ -406,7 +411,7 @@ var users_controller_default = UserController;
 
 // src/users/users.service.ts
 var import_ethers2 = require("ethers");
-var import_client3 = require("@prisma/client");
+var import_client4 = require("@prisma/client");
 var import_crypto = require("crypto");
 var UserService = class {
   constructor() {
@@ -432,13 +437,16 @@ var UserService = class {
     this.withdraw = (requestData) => __async(this, null, function* () {
       return yield this.prisma.$transaction((tx) => __async(this, null, function* () {
         const { withdraw_amount, user_email, withdraw_address } = requestData;
+        const bigNumberAmount = new import_client4.Prisma.Decimal(
+          (0, import_ethers2.formatUnits)(withdraw_amount, USDC_TOKEN_DECIMALS)
+        );
         yield tx.$executeRaw`SELECT * FROM users WHERE email = ${user_email} FOR UPDATE`;
         const updatedUser = yield tx.user.update({
           where: { email: user_email },
-          data: { balance: { decrement: withdraw_amount } },
+          data: { balance: { decrement: bigNumberAmount } },
           select: { balance: true }
         });
-        if (updatedUser.balance < 0) {
+        if (updatedUser.balance.lessThan(0)) {
           throw new BadRequest_default("Insufficient funds");
         }
         const hash = (0, import_crypto.createHash)("sha256");
@@ -447,7 +455,7 @@ var UserService = class {
         const newTransaction = yield tx.transaction.create({
           data: {
             amount: withdraw_amount,
-            type: import_client3.TransactionType.WITHDRAW,
+            type: import_client4.TransactionType.WITHDRAW,
             wallet: withdraw_address,
             transactionHash,
             transactionIndex: 0,
@@ -468,7 +476,7 @@ var UserService = class {
       if (!user)
         throw new NotFound_default("User not found");
       const latestDeposit = yield this.prisma.transaction.findFirst({
-        where: { wallet: user.depositAddress, type: import_client3.TransactionType.DEPOSIT },
+        where: { wallet: user.depositAddress, type: import_client4.TransactionType.DEPOSIT },
         orderBy: [{ blockNumber: "desc" }, { transactionIndex: "desc" }]
       });
       const transactions = yield this.prisma.transaction.findMany({

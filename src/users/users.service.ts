@@ -1,10 +1,11 @@
 import { CreateUserRequestDto, WithdrawRequest } from "./users.validation";
-import { ethers } from "ethers";
+import { ethers, formatUnits } from "ethers";
 import PrismaService from "services/prisma.service";
-import { PrismaClient, TransactionType } from "@prisma/client";
+import { Prisma, PrismaClient, TransactionType } from "@prisma/client";
 import BadRequestException from "exceptions/BadRequest";
 import NotFoundException from "exceptions/NotFound";
 import { createHash } from "crypto";
+import { USDC_TOKEN_DECIMALS } from "blockchain/blockchain.utils";
 
 class UserService {
   private prisma: PrismaClient;
@@ -40,16 +41,20 @@ class UserService {
     return await this.prisma.$transaction(async (tx) => {
       const { withdraw_amount, user_email, withdraw_address } = requestData;
 
+      const bigNumberAmount = new Prisma.Decimal(
+        formatUnits(withdraw_amount, USDC_TOKEN_DECIMALS)
+      );
+
       // Locks single row for update
       await tx.$executeRaw`SELECT * FROM users WHERE email = ${user_email} FOR UPDATE`;
 
       const updatedUser = await tx.user.update({
         where: { email: user_email },
-        data: { balance: { decrement: withdraw_amount } },
+        data: { balance: { decrement: bigNumberAmount } },
         select: { balance: true },
       });
 
-      if (updatedUser.balance < 0) {
+      if (updatedUser.balance.lessThan(0)) {
         throw new BadRequestException("Insufficient funds");
       }
 
